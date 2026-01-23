@@ -27,24 +27,24 @@
   --radius-xl: 0.75rem;
 }
 
-/* Dark mode */
+/* Dark mode - JetBrains Darcula theme inspired */
 @media (prefers-color-scheme: dark) {
   @theme {
-    --color-background: #0a0a0a;
+    --color-background: #2B2B2B;
     --color-foreground: #fafafa;
-    --color-muted: #262626;
+    --color-muted: #3C3F41;
     --color-muted-foreground: #a3a3a3;
-    --color-border: #262626;
-    --color-input: #262626;
+    --color-border: #3C3F41;
+    --color-input: #3C3F41;
     --color-primary: #22c55e;
-    --color-primary-foreground: #0a0a0a;
-    --color-secondary: #262626;
+    --color-primary-foreground: #2B2B2B;
+    --color-secondary: #3C3F41;
     --color-secondary-foreground: #fafafa;
-    --color-accent: #262626;
+    --color-accent: #3C3F41;
     --color-accent-foreground: #fafafa;
-    --color-card: #0a0a0a;
+    --color-card: #2B2B2B;
     --color-card-foreground: #fafafa;
-    --color-popover: #0a0a0a;
+    --color-popover: #2B2B2B;
     --color-popover-foreground: #fafafa;
   }
 }

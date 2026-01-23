@@ -5,7 +5,6 @@ import { Shell } from "@/components/layout/Shell";
 import { EmptyState } from "@/components/layout/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
@@ -22,8 +21,10 @@ export function IngredientsList() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteRecipeCount, setDeleteRecipeCount] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [checkingUsage, setCheckingUsage] = useState(false);
 
   useEffect(() => {
     loadIngredients();
@@ -41,6 +42,21 @@ export function IngredientsList() {
     setLoading(false);
   };
 
+  const openDeleteDialog = async (ingredient) => {
+    setDeleteTarget(ingredient);
+    setDeleteError("");
+    setCheckingUsage(true);
+
+    // Check how many recipes use this ingredient
+    const { count } = await supabase
+      .from("recipe_ingredients")
+      .select("*", { count: "exact", head: true })
+      .eq("ingredient_id", ingredient.id);
+
+    setDeleteRecipeCount(count || 0);
+    setCheckingUsage(false);
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
@@ -52,11 +68,7 @@ export function IngredientsList() {
       .eq("id", deleteTarget.id);
 
     if (error) {
-      if (error.code === "23503") {
-        setDeleteError("Kan ikke slette - ingrediensen brukes i en eller flere oppskrifter.");
-      } else {
-        setDeleteError(error.message);
-      }
+      setDeleteError(error.message);
       setDeleting(false);
       return;
     }
@@ -71,6 +83,7 @@ export function IngredientsList() {
   const closeDeleteDialog = () => {
     setDeleteTarget(null);
     setDeleteError("");
+    setDeleteRecipeCount(0);
   };
 
   const filteredIngredients = ingredients.filter((ing) =>
@@ -139,12 +152,12 @@ export function IngredientsList() {
                       className="flex items-center justify-between p-3 rounded-lg border bg-card"
                     >
                       <div>
-                        <div className="font-medium">{ing.name}</div>
-                        {ing.default_unit && (
-                          <div className="text-sm text-muted-foreground">
-                            Default: {ing.default_unit}
-                          </div>
-                        )}
+                        <div className="font-medium">
+                          {ing.name}
+                          {ing.default_unit && (
+                            <span className="text-muted-foreground font-normal"> ({ing.default_unit})</span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <Button variant="ghost" size="icon" asChild>
@@ -155,7 +168,7 @@ export function IngredientsList() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => setDeleteTarget(ing)}
+                          onClick={() => openDeleteDialog(ing)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
@@ -189,11 +202,27 @@ export function IngredientsList() {
               Er du sikker på at du vil slette "{deleteTarget?.name}"?
             </DialogDescription>
           </DialogHeader>
-          {deleteError && (
-            <div className="rounded-lg bg-destructive/10 text-destructive text-sm p-3">
-              {deleteError}
+          
+          {checkingUsage ? (
+            <div className="flex justify-center py-4">
+              <Spinner size="sm" />
             </div>
+          ) : (
+            <>
+              {deleteRecipeCount > 0 && (
+                <div className="rounded-lg bg-amber-500/10 text-amber-600 text-sm p-3">
+                  <strong>Advarsel:</strong> Denne ingrediensen brukes i {deleteRecipeCount} oppskrift{deleteRecipeCount !== 1 ? "er" : ""}. 
+                  Sletting vil fjerne ingrediensen fra alle disse oppskriftene.
+                </div>
+              )}
+              {deleteError && (
+                <div className="rounded-lg bg-destructive/10 text-destructive text-sm p-3">
+                  {deleteError}
+                </div>
+              )}
+            </>
           )}
+          
           <DialogFooter>
             <Button variant="outline" onClick={closeDeleteDialog}>
               Avbryt
@@ -201,7 +230,7 @@ export function IngredientsList() {
             <Button
               variant="destructive"
               onClick={handleDelete}
-              disabled={deleting}
+              disabled={deleting || checkingUsage}
             >
               {deleting ? <Spinner size="sm" className="mr-2" /> : null}
               Slett

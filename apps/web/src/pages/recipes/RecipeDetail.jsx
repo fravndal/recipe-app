@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Edit, Trash2, ShoppingCart, Users } from "lucide-react";
+import { Edit, Trash2, ShoppingCart, Users, Plus, Check } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,11 +16,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/hooks/useAuth";
 import { formatQuantity } from "@/lib/utils";
 
 export function RecipeDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [recipe, setRecipe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -28,6 +30,10 @@ export function RecipeDetail() {
   const [showShoppingDialog, setShowShoppingDialog] = useState(false);
   const [servingsMultiplier, setServingsMultiplier] = useState(1);
   const [addingToShopping, setAddingToShopping] = useState(false);
+  const [shoppingLists, setShoppingLists] = useState([]);
+  const [selectedListId, setSelectedListId] = useState(null);
+  const [newListName, setNewListName] = useState("");
+  const [creatingNewList, setCreatingNewList] = useState(false);
 
   useEffect(() => {
     loadRecipe();
@@ -42,7 +48,6 @@ export function RecipeDetail() {
           id,
           quantity,
           unit,
-          note,
           ingredients(id, name, category)
         ),
         recipe_tags(
@@ -59,6 +64,48 @@ export function RecipeDetail() {
     setLoading(false);
   };
 
+  const loadShoppingLists = async () => {
+    const { data } = await supabase
+      .from("shopping_lists")
+      .select("id, name, status")
+      .order("created_at", { ascending: false });
+    
+    if (data) {
+      setShoppingLists(data);
+      // Pre-select the first active list if available
+      const activeList = data.find((l) => l.status === "active");
+      if (activeList) {
+        setSelectedListId(activeList.id);
+      } else if (data.length > 0) {
+        setSelectedListId(data[0].id);
+      }
+    }
+  };
+
+  const handleOpenShoppingDialog = () => {
+    loadShoppingLists();
+    setShowShoppingDialog(true);
+    setCreatingNewList(false);
+    setNewListName("");
+  };
+
+  const handleCreateNewList = async () => {
+    if (!newListName.trim()) return;
+    
+    const { data, error } = await supabase
+      .from("shopping_lists")
+      .insert({ user_id: user.id, name: newListName.trim(), status: "active" })
+      .select()
+      .single();
+    
+    if (!error && data) {
+      setShoppingLists((prev) => [data, ...prev]);
+      setSelectedListId(data.id);
+      setCreatingNewList(false);
+      setNewListName("");
+    }
+  };
+
   const handleDelete = async () => {
     setDeleting(true);
     const { error } = await supabase.from("recipes").delete().eq("id", id);
@@ -69,31 +116,10 @@ export function RecipeDetail() {
   };
 
   const handleAddToShopping = async () => {
+    if (!selectedListId) return;
     setAddingToShopping(true);
 
-    // Get or create active shopping list
-    let { data: lists } = await supabase
-      .from("shopping_lists")
-      .select("id")
-      .eq("status", "active")
-      .limit(1);
-
-    let listId;
-    if (lists && lists.length > 0) {
-      listId = lists[0].id;
-    } else {
-      // Create new list
-      const { data: newList, error } = await supabase
-        .from("shopping_lists")
-        .insert({ name: "Shopping List", status: "active" })
-        .select()
-        .single();
-      if (error) {
-        setAddingToShopping(false);
-        return;
-      }
-      listId = newList.id;
-    }
+    const listId = selectedListId;
 
     // Calculate multiplier
     const multiplier = recipe.servings
@@ -102,6 +128,7 @@ export function RecipeDetail() {
 
     // Add ingredients to shopping list
     const items = recipe.recipe_ingredients.map((ri) => ({
+      user_id: user.id,
       shopping_list_id: listId,
       ingredient_id: ri.ingredients.id,
       quantity: ri.quantity ? ri.quantity * multiplier : null,
@@ -118,7 +145,7 @@ export function RecipeDetail() {
         .eq("shopping_list_id", listId)
         .eq("ingredient_id", item.ingredient_id)
         .eq("unit", item.unit || "")
-        .single();
+        .maybeSingle();
 
       if (existing) {
         // Update quantity
@@ -136,7 +163,7 @@ export function RecipeDetail() {
 
     setAddingToShopping(false);
     setShowShoppingDialog(false);
-    navigate("/shopping");
+    navigate(`/shopping/${listId}`);
   };
 
   if (loading) {
@@ -204,9 +231,6 @@ export function RecipeDetail() {
                     )}{" "}
                     {ri.unit && <span>{ri.unit}</span>}{" "}
                     <span>{ri.ingredients.name}</span>
-                    {ri.note && (
-                      <span className="text-muted-foreground"> ({ri.note})</span>
-                    )}
                   </span>
                 </li>
               ))}
@@ -230,7 +254,7 @@ export function RecipeDetail() {
 
         {/* Actions */}
         <div className="flex flex-col gap-2 pt-4">
-          <Button onClick={() => setShowShoppingDialog(true)}>
+          <Button onClick={handleOpenShoppingDialog}>
             <ShoppingCart className="h-4 w-4 mr-2" />
             Add to Shopping List
           </Button>
@@ -288,28 +312,105 @@ export function RecipeDetail() {
           <DialogHeader>
             <DialogTitle>Add to Shopping List</DialogTitle>
             <DialogDescription>
-              How many servings do you want to shop for?
+              Choose a shopping list and number of servings
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <Label htmlFor="servings">Servings</Label>
-            <Input
-              id="servings"
-              type="number"
-              min="1"
-              value={servingsMultiplier}
-              onChange={(e) =>
-                setServingsMultiplier(parseInt(e.target.value) || 1)
-              }
-              className="mt-2"
-            />
-            {recipe.servings && (
-              <p className="text-sm text-muted-foreground mt-2">
-                Recipe makes {recipe.servings} servings. Quantities will be
-                multiplied by {(servingsMultiplier / recipe.servings).toFixed(1)}
-                x.
-              </p>
-            )}
+          <div className="space-y-4 py-2">
+            {/* Shopping list selection */}
+            <div>
+              <Label>Shopping List</Label>
+              <div className="mt-2 space-y-2 max-h-48 overflow-auto">
+                {shoppingLists.map((list) => (
+                  <button
+                    key={list.id}
+                    type="button"
+                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors flex items-center justify-between ${
+                      selectedListId === list.id
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-accent"
+                    }`}
+                    onClick={() => setSelectedListId(list.id)}
+                  >
+                    <span>{list.name}</span>
+                    {selectedListId === list.id && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </button>
+                ))}
+                {shoppingLists.length === 0 && !creatingNewList && (
+                  <p className="text-sm text-muted-foreground">
+                    No shopping lists yet
+                  </p>
+                )}
+              </div>
+              
+              {/* Create new list */}
+              {creatingNewList ? (
+                <div className="flex gap-2 mt-2">
+                  <Input
+                    placeholder="List name..."
+                    value={newListName}
+                    onChange={(e) => setNewListName(e.target.value)}
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleCreateNewList();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleCreateNewList}
+                    disabled={!newListName.trim()}
+                  >
+                    Create
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setCreatingNewList(false);
+                      setNewListName("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setCreatingNewList(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  New List
+                </Button>
+              )}
+            </div>
+
+            {/* Servings */}
+            <div>
+              <Label htmlFor="servings">Servings</Label>
+              <Input
+                id="servings"
+                type="number"
+                min="1"
+                value={servingsMultiplier}
+                onChange={(e) =>
+                  setServingsMultiplier(parseInt(e.target.value) || 1)
+                }
+                className="mt-2"
+              />
+              {recipe.servings && (
+                <p className="text-sm text-muted-foreground mt-2">
+                  Recipe makes {recipe.servings} servings. Quantities will be
+                  multiplied by {(servingsMultiplier / recipe.servings).toFixed(1)}
+                  x.
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -318,7 +419,10 @@ export function RecipeDetail() {
             >
               Cancel
             </Button>
-            <Button onClick={handleAddToShopping} disabled={addingToShopping}>
+            <Button
+              onClick={handleAddToShopping}
+              disabled={addingToShopping || !selectedListId}
+            >
               {addingToShopping ? <Spinner size="sm" className="mr-2" /> : null}
               Add to List
             </Button>

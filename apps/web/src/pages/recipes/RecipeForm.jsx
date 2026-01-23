@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Trash2, X } from "lucide-react";
+import { Plus, Trash2, X, ChevronLeft } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
+import { Select, SelectWrapper } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,51 @@ import {
 } from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
+
+const CATEGORIES = [
+  "Grønnsaker",
+  "Frukt",
+  "Kjøtt",
+  "Fisk og sjømat",
+  "Meieriprodukter",
+  "Egg",
+  "Korn og kornprodukter",
+  "Belgfrukter",
+  "Poteter og rotfrukter",
+  "Nøtter og frø",
+  "Krydder og urter",
+  "Oljer og fett",
+  "Søtning og sukker",
+  "Sauser og dressinger",
+  "Plantebaserte alternativer",
+];
+
+const UNITS = [
+  "stk",
+  "skive",
+  "bit",
+  "filet",
+  "porsjon",
+  "g",
+  "kg",
+  "mg",
+  "ml",
+  "dl",
+  "l",
+  "ts",
+  "ss",
+  "klype",
+  "kopp",
+  "bunt",
+  "håndfull",
+  "pose",
+  "pakke",
+  "boks",
+  "glass",
+  "beger",
+  "tube",
+  "kartong",
+];
 
 const schema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -31,7 +77,6 @@ const schema = z.object({
         ingredient_id: z.string().min(1, "Select an ingredient"),
         quantity: z.coerce.number().optional().nullable(),
         unit: z.string().optional(),
-        note: z.string().optional(),
       })
     )
     .optional(),
@@ -50,6 +95,10 @@ export function RecipeForm() {
   const [selectedTags, setSelectedTags] = useState([]);
   const [showIngredientPicker, setShowIngredientPicker] = useState(false);
   const [ingredientSearch, setIngredientSearch] = useState("");
+  const [showNewIngredientForm, setShowNewIngredientForm] = useState(false);
+  const [newIngredient, setNewIngredient] = useState({ name: "", category: "", default_unit: "" });
+  const [creatingIngredient, setCreatingIngredient] = useState(false);
+  const [ingredientError, setIngredientError] = useState("");
 
   const {
     register,
@@ -103,8 +152,7 @@ export function RecipeForm() {
           recipe_ingredients(
             ingredient_id,
             quantity,
-            unit,
-            note
+            unit
           ),
           recipe_tags(tag_id)
         `)
@@ -171,9 +219,8 @@ export function RecipeForm() {
         user_id: user.id,
         recipe_id: recipeId,
         ingredient_id: ing.ingredient_id,
-        quantity: ing.quantity || null,
+        quantity: ing.quantity || 1,
         unit: ing.unit || null,
-        note: ing.note || null,
       }));
 
       await supabase.from("recipe_ingredients").insert(ingredientData);
@@ -205,12 +252,53 @@ export function RecipeForm() {
   const addIngredient = (ingredient) => {
     append({
       ingredient_id: ingredient.id,
-      quantity: null,
+      quantity: 1,
       unit: ingredient.default_unit || "",
-      note: "",
     });
     setShowIngredientPicker(false);
     setIngredientSearch("");
+    setShowNewIngredientForm(false);
+    setNewIngredient({ name: "", category: "", default_unit: "" });
+  };
+
+  const openNewIngredientForm = () => {
+    setNewIngredient({ name: ingredientSearch, category: "", default_unit: "" });
+    setShowNewIngredientForm(true);
+  };
+
+  const createAndAddIngredient = async () => {
+    if (!newIngredient.name.trim()) return;
+    
+    setCreatingIngredient(true);
+    setIngredientError("");
+    
+    const { data, error } = await supabase
+      .from("ingredients")
+      .insert({
+        user_id: user.id,
+        name: newIngredient.name.trim(),
+        category: newIngredient.category || null,
+        default_unit: newIngredient.default_unit || null,
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      if (error.code === "23505") {
+        setIngredientError("En ingrediens med dette navnet og enheten finnes allerede");
+      } else {
+        setIngredientError(error.message);
+      }
+      setCreatingIngredient(false);
+      return;
+    }
+    
+    if (data) {
+      setAllIngredients((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+      addIngredient(data);
+    }
+    
+    setCreatingIngredient(false);
   };
 
   const filteredIngredients = allIngredients.filter(
@@ -219,8 +307,10 @@ export function RecipeForm() {
       !fields.some((f) => f.ingredient_id === ing.id)
   );
 
-  const getIngredientName = (ingredientId) => {
-    return allIngredients.find((i) => i.id === ingredientId)?.name || "";
+  const getIngredientDisplay = (ingredientId) => {
+    const ing = allIngredients.find((i) => i.id === ingredientId);
+    if (!ing) return "";
+    return ing.default_unit ? `${ing.name} (${ing.default_unit})` : ing.name;
   };
 
   if (loading) {
@@ -333,7 +423,7 @@ export function RecipeForm() {
                   >
                     <div className="flex-1 space-y-2">
                       <div className="font-medium">
-                        {getIngredientName(field.ingredient_id)}
+                        {getIngredientDisplay(field.ingredient_id)}
                       </div>
                       <div className="flex gap-2">
                         <Input
@@ -346,11 +436,6 @@ export function RecipeForm() {
                         <Input
                           placeholder="Unit"
                           {...register(`ingredients.${index}.unit`)}
-                          className="w-24"
-                        />
-                        <Input
-                          placeholder="Note (optional)"
-                          {...register(`ingredients.${index}.note`)}
                           className="flex-1"
                         />
                       </div>
@@ -406,42 +491,166 @@ export function RecipeForm() {
       {/* Ingredient picker dialog */}
       <Dialog
         open={showIngredientPicker}
-        onOpenChange={setShowIngredientPicker}
+        onOpenChange={(open) => {
+          setShowIngredientPicker(open);
+          if (!open) {
+            setShowNewIngredientForm(false);
+            setNewIngredient({ name: "", category: "", default_unit: "" });
+            setIngredientSearch("");
+            setIngredientError("");
+          }
+        }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Ingredient</DialogTitle>
-          </DialogHeader>
-          <Input
-            placeholder="Search ingredients..."
-            value={ingredientSearch}
-            onChange={(e) => setIngredientSearch(e.target.value)}
-            autoFocus
-          />
-          <div className="max-h-64 overflow-auto space-y-1">
-            {filteredIngredients.map((ing) => (
-              <button
-                key={ing.id}
-                type="button"
-                className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent transition-colors"
-                onClick={() => addIngredient(ing)}
-              >
-                <div className="font-medium">{ing.name}</div>
-                {ing.category && (
-                  <div className="text-sm text-muted-foreground">
-                    {ing.category}
-                  </div>
+            <div className="flex items-center justify-between pr-6">
+              <DialogTitle>
+                {showNewIngredientForm ? (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 hover:text-muted-foreground"
+                    onClick={() => {
+                      setShowNewIngredientForm(false);
+                      setIngredientError("");
+                    }}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Ny ingrediens
+                  </button>
+                ) : (
+                  "Legg til ingrediens"
                 )}
-              </button>
-            ))}
-            {filteredIngredients.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                {ingredientSearch
-                  ? "No ingredients found. Create one first."
-                  : "All ingredients already added"}
-              </p>
-            )}
-          </div>
+              </DialogTitle>
+              {!showNewIngredientForm && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setNewIngredient({ name: "", category: "", default_unit: "" });
+                    setShowNewIngredientForm(true);
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Ny
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+          
+          {showNewIngredientForm ? (
+            <div className="space-y-4">
+              {ingredientError && (
+                <div className="rounded-lg bg-destructive/10 text-destructive text-sm p-3">
+                  {ingredientError}
+                </div>
+              )}
+              <div>
+                <Label htmlFor="new-ing-name">Navn *</Label>
+                <Input
+                  id="new-ing-name"
+                  value={newIngredient.name}
+                  onChange={(e) => {
+                    setNewIngredient((prev) => ({ ...prev, name: e.target.value }));
+                    setIngredientError("");
+                  }}
+                  placeholder="Ingrediensnavn"
+                  className="mt-1"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-ing-category">Kategori</Label>
+                <SelectWrapper className="mt-1">
+                  <Select
+                    id="new-ing-category"
+                    value={newIngredient.category}
+                    onValueChange={(val) => setNewIngredient((prev) => ({ ...prev, category: val }))}
+                  >
+                    <option value="">Velg kategori...</option>
+                    {CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </Select>
+                </SelectWrapper>
+              </div>
+              <div>
+                <Label htmlFor="new-ing-unit">Standard enhet</Label>
+                <SelectWrapper className="mt-1">
+                  <Select
+                    id="new-ing-unit"
+                    value={newIngredient.default_unit}
+                    onValueChange={(val) => setNewIngredient((prev) => ({ ...prev, default_unit: val }))}
+                  >
+                    <option value="">Velg enhet...</option>
+                    {UNITS.map((unit) => (
+                      <option key={unit} value={unit}>{unit}</option>
+                    ))}
+                  </Select>
+                </SelectWrapper>
+              </div>
+              <Button
+                type="button"
+                className="w-full"
+                disabled={!newIngredient.name.trim() || creatingIngredient}
+                onClick={createAndAddIngredient}
+              >
+                {creatingIngredient ? <Spinner size="sm" className="mr-2" /> : null}
+                Opprett og legg til
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Input
+                placeholder="Søk ingredienser..."
+                value={ingredientSearch}
+                onChange={(e) => setIngredientSearch(e.target.value)}
+                autoFocus
+              />
+              <div className="max-h-64 overflow-auto space-y-1">
+                {ingredientSearch && (
+                  <button
+                    type="button"
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent transition-colors border border-dashed border-muted-foreground/50"
+                    onClick={openNewIngredientForm}
+                  >
+                    <div className="font-medium flex items-center gap-2">
+                      <Plus className="h-4 w-4" />
+                      Opprett "{ingredientSearch}"
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Legg til ny ingrediens
+                    </div>
+                  </button>
+                )}
+                {filteredIngredients.map((ing) => (
+                  <button
+                    key={ing.id}
+                    type="button"
+                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent transition-colors"
+                    onClick={() => addIngredient(ing)}
+                  >
+                    <div className="font-medium">
+                      {ing.name}
+                      {ing.default_unit && (
+                        <span className="text-muted-foreground font-normal"> ({ing.default_unit})</span>
+                      )}
+                    </div>
+                    {ing.category && (
+                      <div className="text-sm text-muted-foreground">
+                        {ing.category}
+                      </div>
+                    )}
+                  </button>
+                ))}
+                {filteredIngredients.length === 0 && !ingredientSearch && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Alle ingredienser er allerede lagt til
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </Shell>

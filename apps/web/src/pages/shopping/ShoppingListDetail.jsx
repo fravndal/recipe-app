@@ -1,12 +1,11 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   Check,
-  Plus,
-  Trash2,
   RotateCcw,
   ChefHat,
   Package,
+  Trash2,
 } from "lucide-react";
 import { Shell } from "@/components/layout/Shell";
 import { EmptyState } from "@/components/layout/EmptyState";
@@ -22,7 +21,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
@@ -31,21 +29,14 @@ import { formatQuantity } from "@/lib/utils";
 export function ShoppingListDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { isOnline, isSyncing, pendingCount, cacheList } = useOfflineSync();
   const [list, setList] = useState(null);
   const [items, setItems] = useState([]);
   const [pantryItems, setPantryItems] = useState([]);
+  const [pantryLoaded, setPantryLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
-  
-  // Add ingredient dialog
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [ingredients, setIngredients] = useState([]);
-  const [ingredientSearch, setIngredientSearch] = useState("");
-  const [selectedIngredient, setSelectedIngredient] = useState(null);
-  const [addQuantity, setAddQuantity] = useState("");
-  const [addUnit, setAddUnit] = useState("");
-  const [adding, setAdding] = useState(false);
 
   // Add recipe dialog
   const [showRecipeDialog, setShowRecipeDialog] = useState(false);
@@ -53,12 +44,228 @@ export function ShoppingListDetail() {
   const [recipeSearch, setRecipeSearch] = useState("");
   const [addingRecipe, setAddingRecipe] = useState(false);
 
+  // Remove recipe dialog
+  const [showRemoveRecipeDialog, setShowRemoveRecipeDialog] = useState(false);
+  const [removingRecipe, setRemovingRecipe] = useState(false);
+
+  // Track if we've done the initial pantry auto-check
+  const hasAutoCheckedRef = useRef(false);
+  const itemsRef = useRef([]);
+  const pantryItemsRef = useRef([]);
+
+  // Keep refs updated
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    pantryItemsRef.current = pantryItems;
+  }, [pantryItems]);
+
+  useEffect(() => {
+    // Reset auto-check flag when navigating to this page
+    // location.key changes on every navigation, ensuring we reload when returning
+    hasAutoCheckedRef.current = false;
+    setPantryLoaded(false);
     loadList();
-    loadIngredients();
     loadRecipes();
     loadPantryItems();
-  }, [id]);
+  }, [id, location.key]);
+
+  // Re-check items against pantry when page becomes visible (e.g., returning from pantry page)
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === "visible" && !loading) {
+        // Reload pantry items
+        const { data } = await supabase
+          .from("pantry_items")
+          .select(`
+            *,
+            ingredients(id, name)
+          `);
+        
+        if (data) {
+          setPantryItems(data);
+          pantryItemsRef.current = data;
+
+          const currentItems = itemsRef.current;
+
+          // Find unchecked items that should be checked (have sufficient pantry)
+          const itemsToCheck = currentItems.filter((item) => {
+            if (item.checked) return false;
+
+            const pantryItem = data.find((p) => p.ingredient_id === item.ingredient_id);
+            if (!pantryItem) return false;
+
+            const pantryQty = Number(pantryItem.quantity) || 0;
+            if (pantryQty <= 0) return false;
+
+            const itemQty = Number(item.quantity) || 0;
+            if (itemQty <= 0) return true;
+
+            return pantryQty >= itemQty;
+          });
+
+          // Find checked items that should be unchecked (no longer have sufficient pantry)
+          const itemsToUncheck = currentItems.filter((item) => {
+            if (!item.checked) return false;
+
+            const pantryItem = data.find((p) => p.ingredient_id === item.ingredient_id);
+            
+            // If no pantry item exists, uncheck it
+            if (!pantryItem) return true;
+
+            const pantryQty = Number(pantryItem.quantity) || 0;
+            // If pantry quantity is 0 or negative, uncheck it
+            if (pantryQty <= 0) return true;
+
+            const itemQty = Number(item.quantity) || 0;
+            // If item has no quantity, keep it checked (any pantry amount is sufficient)
+            if (itemQty <= 0) return false;
+
+            // If pantry doesn't have enough, uncheck it
+            return pantryQty < itemQty;
+          });
+
+          // Update items that should be checked
+          if (itemsToCheck.length > 0) {
+            const idsToCheck = itemsToCheck.map((i) => i.id);
+            
+            await supabase
+              .from("shopping_list_items")
+              .update({ checked: true })
+              .in("id", idsToCheck);
+
+            setItems((prev) =>
+              prev.map((item) =>
+                idsToCheck.includes(item.id) ? { ...item, checked: true } : item
+              )
+            );
+          }
+
+          // Update items that should be unchecked
+          if (itemsToUncheck.length > 0) {
+            const idsToUncheck = itemsToUncheck.map((i) => i.id);
+            
+            await supabase
+              .from("shopping_list_items")
+              .update({ checked: false })
+              .in("id", idsToUncheck);
+
+            setItems((prev) =>
+              prev.map((item) =>
+                idsToUncheck.includes(item.id) ? { ...item, checked: false } : item
+              )
+            );
+          }
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [loading]);
+
+  // Auto-check items that are available in pantry on initial load
+  useEffect(() => {
+    // Wait for both loading to complete and pantry to be loaded
+    if (loading || !pantryLoaded) {
+      return;
+    }
+
+    // Only run once per list
+    if (hasAutoCheckedRef.current) {
+      return;
+    }
+
+    hasAutoCheckedRef.current = true;
+
+    const autoCheckItems = async () => {
+      const currentItems = itemsRef.current;
+      const currentPantryItems = pantryItemsRef.current;
+
+      if (currentItems.length === 0) {
+        return;
+      }
+
+      // Find unchecked items that should be checked (have sufficient pantry)
+      const itemsToCheck = currentItems.filter((item) => {
+        // Skip already checked items
+        if (item.checked) return false;
+
+        // Find matching pantry item by ingredient_id
+        const pantryItem = currentPantryItems.find((p) => p.ingredient_id === item.ingredient_id);
+        if (!pantryItem) return false;
+
+        const pantryQty = Number(pantryItem.quantity) || 0;
+        if (pantryQty <= 0) return false;
+
+        // If shopping list item has no quantity, any pantry amount counts
+        const itemQty = Number(item.quantity) || 0;
+        if (itemQty <= 0) return true;
+
+        // Check if pantry has enough
+        return pantryQty >= itemQty;
+      });
+
+      // Find checked items that should be unchecked (no longer have sufficient pantry)
+      const itemsToUncheck = currentItems.filter((item) => {
+        if (!item.checked) return false;
+
+        const pantryItem = currentPantryItems.find((p) => p.ingredient_id === item.ingredient_id);
+        
+        // If no pantry item exists, uncheck it
+        if (!pantryItem) return true;
+
+        const pantryQty = Number(pantryItem.quantity) || 0;
+        // If pantry quantity is 0 or negative, uncheck it
+        if (pantryQty <= 0) return true;
+
+        const itemQty = Number(item.quantity) || 0;
+        // If item has no quantity, keep it checked (any pantry amount is sufficient)
+        if (itemQty <= 0) return false;
+
+        // If pantry doesn't have enough, uncheck it
+        return pantryQty < itemQty;
+      });
+
+      // Update items that should be checked
+      if (itemsToCheck.length > 0) {
+        const idsToCheck = itemsToCheck.map((i) => i.id);
+        
+        // Update database first
+        await supabase
+          .from("shopping_list_items")
+          .update({ checked: true })
+          .in("id", idsToCheck);
+
+        // Then update local state
+        setItems((prev) =>
+          prev.map((item) =>
+            idsToCheck.includes(item.id) ? { ...item, checked: true } : item
+          )
+        );
+      }
+
+      // Update items that should be unchecked
+      if (itemsToUncheck.length > 0) {
+        const idsToUncheck = itemsToUncheck.map((i) => i.id);
+        
+        await supabase
+          .from("shopping_list_items")
+          .update({ checked: false })
+          .in("id", idsToUncheck);
+
+        setItems((prev) =>
+          prev.map((item) =>
+            idsToUncheck.includes(item.id) ? { ...item, checked: false } : item
+          )
+        );
+      }
+    };
+
+    autoCheckItems();
+  }, [loading, pantryLoaded]);
 
   // Cache items for offline use when they change
   useEffect(() => {
@@ -90,14 +297,6 @@ export function ShoppingListDetail() {
     setLoading(false);
   };
 
-  const loadIngredients = async () => {
-    const { data } = await supabase
-      .from("ingredients")
-      .select("id, name, category, default_unit")
-      .order("name");
-    if (data) setIngredients(data);
-  };
-
   const loadRecipes = async () => {
     const { data } = await supabase
       .from("recipes")
@@ -124,11 +323,26 @@ export function ShoppingListDetail() {
         ingredients(id, name)
       `);
     if (data) setPantryItems(data);
+    setPantryLoaded(true);
   };
 
   // Get pantry info for an ingredient
   const getPantryInfo = (ingredientId) => {
     return pantryItems.find((p) => p.ingredient_id === ingredientId);
+  };
+
+  // Helper to check if an item should be auto-completed based on pantry
+  const shouldAutoComplete = (item) => {
+    const pantryItem = pantryItems.find((p) => p.ingredient_id === item.ingredient_id);
+    if (!pantryItem) return false;
+
+    const pantryQty = Number(pantryItem.quantity) || 0;
+    if (pantryQty <= 0) return false;
+
+    const itemQty = Number(item.quantity) || 0;
+    if (itemQty <= 0) return true;
+
+    return pantryQty >= itemQty;
   };
 
   const toggleItem = async (itemId, checked) => {
@@ -143,43 +357,6 @@ export function ShoppingListDetail() {
       .eq("id", itemId);
   };
 
-  const deleteItem = async (itemId) => {
-    setItems((prev) => prev.filter((item) => item.id !== itemId));
-    await supabase.from("shopping_list_items").delete().eq("id", itemId);
-  };
-
-  const addItem = async () => {
-    if (!selectedIngredient) return;
-    setAdding(true);
-
-    const { data, error } = await supabase
-      .from("shopping_list_items")
-      .insert({
-        user_id: user.id,
-        shopping_list_id: id,
-        ingredient_id: selectedIngredient.id,
-        quantity: addQuantity ? parseFloat(addQuantity) : null,
-        unit: addUnit || null,
-        checked: false,
-      })
-      .select(`
-        *,
-        ingredients(id, name, category)
-      `)
-      .single();
-
-    if (!error && data) {
-      setItems((prev) => [...prev, data]);
-    }
-
-    setShowAddDialog(false);
-    setSelectedIngredient(null);
-    setAddQuantity("");
-    setAddUnit("");
-    setIngredientSearch("");
-    setAdding(false);
-  };
-
   const addRecipeToList = async (recipe) => {
     if (!recipe.recipe_ingredients || recipe.recipe_ingredients.length === 0) {
       return;
@@ -191,7 +368,7 @@ export function ShoppingListDetail() {
       user_id: user.id,
       shopping_list_id: id,
       ingredient_id: ri.ingredient_id,
-      quantity: ri.quantity,
+      quantity: ri.quantity || 1,
       unit: ri.unit || ri.ingredients?.default_unit || null,
       checked: false,
       recipe_source_id: recipe.id,
@@ -207,7 +384,23 @@ export function ShoppingListDetail() {
       `);
 
     if (!error && data) {
-      setItems((prev) => [...prev, ...data]);
+      // Check which new items should be auto-completed based on pantry
+      const itemsWithPantryCheck = data.map((item) => ({
+        ...item,
+        checked: shouldAutoComplete(item),
+      }));
+
+      // Update database for items that should be checked
+      const itemsToCheck = itemsWithPantryCheck.filter((item) => item.checked);
+      if (itemsToCheck.length > 0) {
+        const idsToCheck = itemsToCheck.map((i) => i.id);
+        await supabase
+          .from("shopping_list_items")
+          .update({ checked: true })
+          .in("id", idsToCheck);
+      }
+
+      setItems((prev) => [...prev, ...itemsWithPantryCheck]);
     }
 
     setShowRecipeDialog(false);
@@ -216,24 +409,84 @@ export function ShoppingListDetail() {
   };
 
   const updateStatus = async (status) => {
+    // Update list status
     await supabase.from("shopping_lists").update({ status }).eq("id", id);
     setList((prev) => ({ ...prev, status }));
+
+    if (status === "completed") {
+      // When completing: check all items
+      const uncheckedItems = items.filter((item) => !item.checked);
+      if (uncheckedItems.length > 0) {
+        const idsToCheck = uncheckedItems.map((i) => i.id);
+        
+        await supabase
+          .from("shopping_list_items")
+          .update({ checked: true })
+          .in("id", idsToCheck);
+
+        setItems((prev) =>
+          prev.map((item) => ({ ...item, checked: true }))
+        );
+      }
+    } else if (status === "active") {
+      // When reopening: uncheck items, except those with sufficient pantry stock
+      const itemsToUncheck = items.filter((item) => {
+        if (!item.checked) return false;
+        // Keep checked if item has sufficient pantry stock
+        return !shouldAutoComplete(item);
+      });
+
+      if (itemsToUncheck.length > 0) {
+        const idsToUncheck = itemsToUncheck.map((i) => i.id);
+        
+        await supabase
+          .from("shopping_list_items")
+          .update({ checked: false })
+          .in("id", idsToUncheck);
+
+        setItems((prev) =>
+          prev.map((item) =>
+            idsToUncheck.includes(item.id) ? { ...item, checked: false } : item
+          )
+        );
+      }
+    }
   };
 
-  const clearChecked = async () => {
-    const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
-    if (checkedIds.length === 0) return;
+  // Get recipes that have items in this shopping list
+  const recipesInList = items
+    .filter((item) => item.recipe_source_id && item.recipes?.title)
+    .reduce((acc, item) => {
+      const recipeId = item.recipe_source_id;
+      if (!acc.find((r) => r.id === recipeId)) {
+        acc.push({
+          id: recipeId,
+          title: item.recipes.title,
+          itemCount: items.filter((i) => i.recipe_source_id === recipeId).length,
+        });
+      }
+      return acc;
+    }, []);
 
-    setItems((prev) => prev.filter((item) => !item.checked));
+  const removeRecipeFromList = async (recipeId) => {
+    setRemovingRecipe(true);
+
+    // Get all item IDs for this recipe
+    const itemsToRemove = items.filter((item) => item.recipe_source_id === recipeId);
+    const idsToRemove = itemsToRemove.map((i) => i.id);
+
+    // Update local state
+    setItems((prev) => prev.filter((item) => item.recipe_source_id !== recipeId));
+
+    // Delete from database
     await supabase
       .from("shopping_list_items")
       .delete()
-      .in("id", checkedIds);
-  };
+      .in("id", idsToRemove);
 
-  const filteredIngredients = ingredients.filter((ing) =>
-    ing.name.toLowerCase().includes(ingredientSearch.toLowerCase())
-  );
+    setRemovingRecipe(false);
+    setShowRemoveRecipeDialog(false);
+  };
 
   const filteredRecipes = recipes.filter((r) =>
     r.title.toLowerCase().includes(recipeSearch.toLowerCase())
@@ -288,14 +541,16 @@ export function ShoppingListDetail() {
             <ChefHat className="h-4 w-4 mr-2" />
             Legg til oppskrift
           </Button>
-          <Button
-            variant="outline"
-            className="flex-1"
-            onClick={() => setShowAddDialog(true)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Legg til vare
-          </Button>
+          {recipesInList.length > 0 && (
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setShowRemoveRecipeDialog(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Fjern oppskrift
+            </Button>
+          )}
         </div>
 
         {/* Status bar */}
@@ -304,12 +559,6 @@ export function ShoppingListDetail() {
             {checkedCount}/{items.length} varer krysset av
           </div>
           <div className="flex gap-2">
-            {checkedCount > 0 && (
-              <Button variant="outline" size="sm" onClick={clearChecked}>
-                <Trash2 className="h-4 w-4 mr-1" />
-                Fjern kryssede
-              </Button>
-            )}
             {list.status === "active" && (
               <Button
                 variant="outline"
@@ -347,7 +596,7 @@ export function ShoppingListDetail() {
         {items.length === 0 ? (
           <EmptyState
             title="Tom liste"
-            description="Legg til oppskrifter eller enkeltvarer i handlelisten"
+            description="Legg til oppskrifter i handlelisten"
             action={
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowRecipeDialog(true)}>
@@ -372,25 +621,24 @@ export function ShoppingListDetail() {
                     return (
                       <div
                         key={item.id}
-                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
-                          item.checked ? "bg-muted/50 opacity-60" : "bg-card"
+                        className={`flex items-center gap-3 p-3 rounded-lg border transition-colors cursor-pointer ${
+                          item.checked ? "bg-muted/50 opacity-60" : "bg-card hover:bg-accent/50"
                         }`}
+                        onClick={() => toggleItem(item.id, !item.checked)}
                       >
                         <Checkbox
                           checked={item.checked}
-                          onCheckedChange={(checked) =>
-                            toggleItem(item.id, checked)
-                          }
+                          onCheckedChange={() => {}}
+                          onClick={(e) => e.stopPropagation()}
                         />
                         <div className="flex-1 min-w-0">
                           <div className={item.checked ? "line-through" : ""}>
-                            {item.quantity && (
-                              <span className="font-medium">
-                                {formatQuantity(item.quantity)}
+                            <span>{item.ingredients?.name}</span>
+                            {(item.quantity || item.unit) && (
+                              <span className="text-muted-foreground">
+                                {" "}({item.quantity && formatQuantity(item.quantity)}{item.quantity && item.unit && " "}{item.unit})
                               </span>
-                            )}{" "}
-                            {item.unit && <span>{item.unit}</span>}{" "}
-                            {item.ingredients?.name}
+                            )}
                           </div>
                           
                           {/* Recipe source */}
@@ -408,14 +656,6 @@ export function ShoppingListDetail() {
                             </div>
                           )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={() => deleteItem(item.id)}
-                        >
-                          <Trash2 className="h-4 w-4 text-muted-foreground" />
-                        </Button>
                       </div>
                     );
                   })}
@@ -424,115 +664,7 @@ export function ShoppingListDetail() {
             ))}
           </div>
         )}
-
-        {/* FAB */}
-        <button
-          onClick={() => setShowAddDialog(true)}
-          className="fixed right-4 bottom-24 z-40 inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="h-6 w-6" />
-        </button>
       </div>
-
-      {/* Add item dialog */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Legg til vare</DialogTitle>
-          </DialogHeader>
-
-          {!selectedIngredient ? (
-            <>
-              <Input
-                placeholder="Søk ingredienser..."
-                value={ingredientSearch}
-                onChange={(e) => setIngredientSearch(e.target.value)}
-                autoFocus
-              />
-              <div className="max-h-64 overflow-auto space-y-1">
-                {filteredIngredients.map((ing) => (
-                  <button
-                    key={ing.id}
-                    className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent transition-colors"
-                    onClick={() => {
-                      setSelectedIngredient(ing);
-                      setAddUnit(ing.default_unit || "");
-                    }}
-                  >
-                    <div className="font-medium">{ing.name}</div>
-                    {ing.category && (
-                      <div className="text-sm text-muted-foreground">
-                        {ing.category}
-                      </div>
-                    )}
-                  </button>
-                ))}
-                {filteredIngredients.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    Ingen ingredienser funnet
-                  </p>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{selectedIngredient.name}</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedIngredient(null)}
-                >
-                  Endre
-                </Button>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <Label htmlFor="quantity">Mengde</Label>
-                  <Input
-                    id="quantity"
-                    type="number"
-                    step="0.1"
-                    value={addQuantity}
-                    onChange={(e) => setAddQuantity(e.target.value)}
-                    placeholder="1"
-                    className="mt-1"
-                  />
-                </div>
-                <div className="flex-1">
-                  <Label htmlFor="unit">Enhet</Label>
-                  <Input
-                    id="unit"
-                    value={addUnit}
-                    onChange={(e) => setAddUnit(e.target.value)}
-                    placeholder="stk"
-                    className="mt-1"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowAddDialog(false);
-                setSelectedIngredient(null);
-                setIngredientSearch("");
-              }}
-            >
-              Avbryt
-            </Button>
-            {selectedIngredient && (
-              <Button onClick={addItem} disabled={adding}>
-                {adding ? <Spinner size="sm" className="mr-2" /> : null}
-                Legg til
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Add recipe dialog */}
       <Dialog open={showRecipeDialog} onOpenChange={setShowRecipeDialog}>
@@ -581,6 +713,49 @@ export function ShoppingListDetail() {
                 setShowRecipeDialog(false);
                 setRecipeSearch("");
               }}
+            >
+              Lukk
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove recipe dialog */}
+      <Dialog open={showRemoveRecipeDialog} onOpenChange={setShowRemoveRecipeDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fjern oppskrift</DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm text-muted-foreground">
+            Velg en oppskrift for å fjerne alle ingrediensene fra handlelisten.
+          </p>
+
+          <div className="max-h-80 overflow-auto space-y-1">
+            {recipesInList.map((recipe) => (
+              <button
+                key={recipe.id}
+                className="w-full text-left px-3 py-3 rounded-lg hover:bg-destructive/10 transition-colors border"
+                onClick={() => removeRecipeFromList(recipe.id)}
+                disabled={removingRecipe}
+              >
+                <div className="font-medium">{recipe.title}</div>
+                <div className="text-sm text-muted-foreground">
+                  {recipe.itemCount} ingrediens{recipe.itemCount !== 1 ? "er" : ""}
+                </div>
+              </button>
+            ))}
+            {recipesInList.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                Ingen oppskrifter i listen
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowRemoveRecipeDialog(false)}
             >
               Lukk
             </Button>

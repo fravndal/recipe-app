@@ -40,7 +40,7 @@ export function PantryList() {
         .from("pantry_items")
         .select(`
           *,
-          ingredients(id, name, category)
+          ingredients(id, name, category, default_unit)
         `)
         .order("created_at", { ascending: false }),
       supabase
@@ -61,7 +61,7 @@ export function PantryList() {
     const itemData = {
       user_id: user.id,
       ingredient_id: selectedIngredient.id,
-      quantity: quantity ? parseFloat(quantity) : null,
+      quantity: quantity ? parseFloat(quantity) : 1,
       unit: unit || null,
     };
 
@@ -86,7 +86,7 @@ export function PantryList() {
         .insert(itemData)
         .select(`
           *,
-          ingredients(id, name, category)
+          ingredients(id, name, category, default_unit)
         `)
         .single();
 
@@ -177,6 +177,9 @@ export function PantryList() {
                       <div>
                         <div className="font-medium">
                           {item.ingredients?.name}
+                          {item.ingredients?.default_unit && (
+                            <span className="text-muted-foreground font-normal"> ({item.ingredients.default_unit})</span>
+                          )}
                         </div>
                         {(item.quantity || item.unit) && (
                           <div className="text-sm text-muted-foreground">
@@ -242,10 +245,16 @@ export function PantryList() {
                     className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent transition-colors"
                     onClick={() => {
                       setSelectedIngredient(ing);
+                      setQuantity("1");
                       setUnit(ing.default_unit || "");
                     }}
                   >
-                    <div className="font-medium">{ing.name}</div>
+                    <div className="font-medium">
+                      {ing.name}
+                      {ing.default_unit && (
+                        <span className="text-muted-foreground font-normal"> ({ing.default_unit})</span>
+                      )}
+                    </div>
                     {ing.category && (
                       <div className="text-sm text-muted-foreground">
                         {ing.category}
@@ -263,7 +272,12 @@ export function PantryList() {
           ) : (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="font-medium">{selectedIngredient.name}</span>
+                <span className="font-medium">
+                  {selectedIngredient.name}
+                  {selectedIngredient.default_unit && (
+                    <span className="text-muted-foreground font-normal"> ({selectedIngredient.default_unit})</span>
+                  )}
+                </span>
                 {!editingItem && (
                   <Button
                     variant="ghost"
