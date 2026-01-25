@@ -12,58 +12,17 @@ import { Spinner } from "@/components/ui/spinner";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 
-const CATEGORIES = [
-  "Grønnsaker",
-  "Frukt",
-  "Kjøtt",
-  "Fisk og sjømat",
-  "Meieriprodukter",
-  "Egg",
-  "Korn og kornprodukter",
-  "Belgfrukter",
-  "Poteter og rotfrukter",
-  "Nøtter og frø",
-  "Krydder og urter",
-  "Oljer og fett",
-  "Søtning og sukker",
-  "Sauser og dressinger",
-  "Plantebaserte alternativer",
-];
-
-const UNITS = [
-  // Antall
-  "stk",
-  "skive",
-  "bit",
-  "filet",
-  "porsjon",
-  // Vekt
-  "g",
-  "kg",
-  "mg",
-  // Volum
-  "ml",
-  "dl",
-  "l",
-  // Kjøkkenmål
-  "ts",
-  "ss",
-  "klype",
-  "kopp",
-  // Mengde / pakning
-  "bunt",
-  "håndfull",
-  "pose",
-  "pakke",
-  "boks",
-  "glass",
-  "beger",
-  "tube",
-  "kartong",
-];
+// Unit type labels in Norwegian
+const UNIT_TYPE_LABELS = {
+  count: "Antall",
+  weight: "Vekt",
+  volume: "Volum",
+  kitchen: "Kjøkkenmål",
+  package: "Pakning",
+};
 
 const schema = z.object({
-  name: z.string().min(1, "Name is required"),
+  name: z.string().min(1, "Navn er påkrevd"),
   category: z.string().optional(),
   default_unit: z.string().optional(),
 });
@@ -74,9 +33,11 @@ export function IngredientForm() {
   const { user } = useAuth();
   const isEditing = Boolean(id);
 
-  const [loading, setLoading] = useState(isEditing);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [categories, setCategories] = useState([]);
+  const [units, setUnits] = useState([]);
 
   const {
     register,
@@ -98,25 +59,42 @@ export function IngredientForm() {
   const defaultUnit = watch("default_unit");
 
   useEffect(() => {
-    if (id) {
-      loadIngredient();
-    }
+    loadFormData();
   }, [id]);
 
-  const loadIngredient = async () => {
-    const { data, error } = await supabase
-      .from("ingredients")
-      .select("*")
-      .eq("id", id)
-      .single();
+  const loadFormData = async () => {
+    // Load categories, units, and optionally the ingredient in parallel
+    const promises = [
+      supabase.from("categories").select("*").order("sort_order"),
+      supabase.from("units").select("*").order("sort_order"),
+    ];
 
-    if (!error && data) {
+    if (id) {
+      promises.push(
+        supabase.from("ingredients").select("*").eq("id", id).single()
+      );
+    }
+
+    const results = await Promise.all(promises);
+
+    const [categoriesRes, unitsRes, ingredientRes] = results;
+
+    if (categoriesRes.data) {
+      setCategories(categoriesRes.data);
+    }
+
+    if (unitsRes.data) {
+      setUnits(unitsRes.data);
+    }
+
+    if (ingredientRes?.data) {
       reset({
-        name: data.name,
-        category: data.category || "",
-        default_unit: data.default_unit || "",
+        name: ingredientRes.data.name,
+        category: ingredientRes.data.category || "",
+        default_unit: ingredientRes.data.default_unit || "",
       });
     }
+
     setLoading(false);
   };
 
@@ -149,7 +127,7 @@ export function IngredientForm() {
 
       if (error) {
         if (error.code === "23505") {
-          setError("An ingredient with this name already exists");
+          setError("En ingrediens med dette navnet finnes allerede");
         } else {
           setError(error.message);
         }
@@ -161,10 +139,19 @@ export function IngredientForm() {
     navigate("/ingredients");
   };
 
+  // Group units by type for better display
+  const groupedUnits = units.reduce((acc, unit) => {
+    if (!acc[unit.unit_type]) {
+      acc[unit.unit_type] = [];
+    }
+    acc[unit.unit_type].push(unit);
+    return acc;
+  }, {});
+
   if (loading) {
     return (
       <Shell
-        title={isEditing ? "Edit Ingredient" : "New Ingredient"}
+        title={isEditing ? "Rediger ingrediens" : "Ny ingrediens"}
         showBack
         showNav={false}
       >
@@ -177,7 +164,7 @@ export function IngredientForm() {
 
   return (
     <Shell
-      title={isEditing ? "Edit Ingredient" : "New Ingredient"}
+      title={isEditing ? "Rediger ingrediens" : "Ny ingrediens"}
       showBack
       showNav={false}
     >
@@ -190,11 +177,11 @@ export function IngredientForm() {
           )}
 
           <div>
-            <Label htmlFor="name">Name *</Label>
+            <Label htmlFor="name">Navn *</Label>
             <Input
               id="name"
               {...register("name")}
-              placeholder="e.g., Chicken Breast"
+              placeholder="f.eks. Kyllingfilet"
               className="mt-1"
               autoFocus
             />
@@ -206,17 +193,17 @@ export function IngredientForm() {
           </div>
 
           <div>
-            <Label htmlFor="category">Category</Label>
+            <Label htmlFor="category">Kategori</Label>
             <SelectWrapper className="mt-1">
               <Select
                 id="category"
                 value={category}
                 onValueChange={(val) => setValue("category", val)}
               >
-                <option value="">Select category...</option>
-                {CATEGORIES.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
+                <option value="">Velg kategori...</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.name}>
+                    {cat.name}
                   </option>
                 ))}
               </Select>
@@ -224,23 +211,27 @@ export function IngredientForm() {
           </div>
 
           <div>
-            <Label htmlFor="default_unit">Default Unit</Label>
+            <Label htmlFor="default_unit">Standard enhet</Label>
             <SelectWrapper className="mt-1">
               <Select
                 id="default_unit"
                 value={defaultUnit}
                 onValueChange={(val) => setValue("default_unit", val)}
               >
-                <option value="">Select unit...</option>
-                {UNITS.map((unit) => (
-                  <option key={unit} value={unit}>
-                    {unit}
-                  </option>
+                <option value="">Velg enhet...</option>
+                {Object.entries(groupedUnits).map(([type, typeUnits]) => (
+                  <optgroup key={type} label={UNIT_TYPE_LABELS[type] || type}>
+                    {typeUnits.map((unit) => (
+                      <option key={unit.id} value={unit.name}>
+                        {unit.name}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </Select>
             </SelectWrapper>
             <p className="text-sm text-muted-foreground mt-1">
-              This will be pre-filled when adding this ingredient to recipes
+              Forhåndsutfylles når du legger til ingrediensen i oppskrifter
             </p>
           </div>
 
@@ -251,11 +242,11 @@ export function IngredientForm() {
               className="flex-1"
               onClick={() => navigate(-1)}
             >
-              Cancel
+              Avbryt
             </Button>
             <Button type="submit" className="flex-1" disabled={saving}>
               {saving ? <Spinner size="sm" className="mr-2" /> : null}
-              {isEditing ? "Save Changes" : "Create Ingredient"}
+              {isEditing ? "Lagre endringer" : "Opprett ingrediens"}
             </Button>
           </div>
         </div>

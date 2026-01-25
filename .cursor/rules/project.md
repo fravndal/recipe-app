@@ -2,48 +2,69 @@
 
 ## Overview
 
-This is a Norwegian recipe planning PWA with offline support. Built with React + Vite frontend and self-hosted Supabase backend.
+Norwegian recipe planning PWA with offline support. Built with React + Vite frontend and self-hosted Supabase backend.
 
 ## Tech Stack
 
-- **Frontend**: React 18, Vite, TailwindCSS, React Router v6
+- **Frontend**: React 19, Vite 7, TailwindCSS 4, React Router v7
 - **Backend**: Self-hosted Supabase (PostgreSQL, PostgREST, GoTrue, Kong)
-- **Styling**: Tailwind CSS with custom shadcn-style components
+- **Styling**: Tailwind CSS v4 with custom shadcn-style components
 - **State**: React Context for auth, local state for components
-- **Offline**: IndexedDB via custom hooks
+- **Offline**: IndexedDB via custom hooks for shopping lists
 
-## Language
+## Quick Reference
 
-All user-facing text should be in **Norwegian (Bokmål)**. Code, comments, and documentation remain in English.
+| Topic | Rule File |
+|-------|-----------|
+| System Architecture | [architecture.md](architecture.md) |
+| Docker Setup | [docker.md](docker.md) |
+| Database Schema | [database.md](database.md) |
+| UI Components | [components.md](components.md) |
+| Theme & Styling | [theme.md](theme.md) |
+
+## Language Conventions
+
+- **User-facing text**: Norwegian (Bokmål)
+- **Code & comments**: English
+- **Documentation**: English
 
 ## Project Structure
 
 ```
 recipe-app/
-├── apps/web/                 # React frontend
+├── apps/web/                 # React PWA frontend
 │   ├── src/
 │   │   ├── components/       # Reusable components
-│   │   │   ├── layout/       # Page structure (Shell, Header, etc.)
-│   │   │   └── ui/           # UI primitives (Button, Input, etc.)
-│   │   ├── hooks/            # Custom React hooks
-│   │   ├── lib/              # Utilities and clients
+│   │   │   ├── layout/       # Shell, Header, BottomNav, EmptyState
+│   │   │   └── ui/           # Button, Input, Dialog, Card, etc.
+│   │   ├── hooks/            # useAuth, useOfflineSync
+│   │   ├── lib/              # supabase.js, db.js, utils.js
 │   │   └── pages/            # Route components
+│   │       ├── auth/         # Login, Register
+│   │       ├── recipes/      # RecipesList, RecipeDetail, RecipeForm
+│   │       ├── ingredients/  # IngredientsList, IngredientForm
+│   │       ├── shopping/     # ShoppingLists, ShoppingListDetail
+│   │       └── pantry/       # PantryList
 │   └── .env                  # Frontend environment variables
 ├── supabase/                 # Backend configuration
-│   ├── docker-compose.yml    # All Supabase services
-│   ├── kong.yml              # API Gateway config
-│   └── migrations/           # SQL migrations
-├── scripts/                  # Utility scripts
-└── docs/                     # Documentation
+│   ├── docker-compose.yml    # 7 Supabase services
+│   ├── kong.yml              # API Gateway routes
+│   ├── config.toml           # Supabase CLI config
+│   └── migrations/           # SQL migrations (001-011)
+├── scripts/                  # Utility scripts (generate-keys.js)
+├── docs/                     # Additional documentation
+└── Makefile                  # Development commands
 ```
 
 ## Commands
 
 ```bash
-make up        # Start Supabase services
+make up        # Start Supabase services (Docker)
 make down      # Stop Supabase services
-make dev       # Start frontend dev server
-make logs      # View Supabase logs
+make dev       # Start frontend dev server (port 5173)
+make build     # Build frontend for production
+make logs      # View Supabase container logs
+make restart   # Restart Supabase services
 ```
 
 ## Environment Variables
@@ -68,50 +89,13 @@ STUDIO_PORT=54323
 PG_META_CRYPTO_KEY=<key>
 ```
 
-## Database Schema
-
-### Core Tables
-- `ingredients` - User's ingredient library
-- `recipes` - Recipe definitions
-- `recipe_ingredients` - Junction table with quantities
-- `tags` - Recipe tags
-- `recipe_tags` - Recipe-tag associations
-
-### Shopping & Pantry
-- `shopping_lists` - Shopping list metadata
-- `shopping_list_items` - Items in lists (links to ingredients, optionally to source recipe)
-- `pantry_items` - What user has at home
-
-### Security
-All tables use Row Level Security (RLS) with `auth.uid() = user_id` policies.
-
-## Component Guidelines
-
-### UI Components (`components/ui/`)
-- Stateless, reusable primitives
-- Accept className for styling overrides
-- Use `cn()` utility for class merging
-- Follow shadcn/ui patterns
-
-### Layout Components (`components/layout/`)
-- `Shell` - Main page wrapper with header and navigation
-- `Header` - Top app bar
-- `BottomNav` - Mobile bottom navigation
-- `EmptyState` - Placeholder for empty lists
-
-### Page Components (`pages/`)
-- One component per route
-- Handle data fetching internally
-- Use `useAuth()` for user context
-- Use `supabase` client for API calls
-
 ## Coding Conventions
 
-1. **Imports**: Group by external, internal, relative
-2. **State**: useState for local, Context for shared
-3. **API calls**: Always handle errors, show loading states
-4. **Forms**: Use react-hook-form + zod for validation
-5. **Styling**: Tailwind utilities, no inline styles
+1. **Imports**: Group by external → internal → relative
+2. **State**: `useState` for local, Context for shared (auth)
+3. **API calls**: Always handle errors, show loading states via `<Spinner />`
+4. **Forms**: Use controlled components with validation
+5. **Styling**: Tailwind utilities, use `cn()` for class merging
 
 ## Common Patterns
 
@@ -134,13 +118,25 @@ const loadData = async () => {
 ```
 
 ### Protected Routes
-All authenticated routes check `useAuth()` for user session.
+All authenticated routes check `useAuth()` for user session. Unauthenticated users redirect to `/login`.
 
 ### Error Handling
 ```jsx
 if (error.code === "23503") {
   // Foreign key violation
+} else if (error.code === "23505") {
+  // Unique constraint violation  
 } else if (error.code === "42501") {
   // RLS policy violation
 }
 ```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `App.jsx` | Routing setup with protected/public routes |
+| `useAuth.jsx` | Authentication context and session management |
+| `useOfflineSync.jsx` | Offline sync for shopping lists |
+| `supabase.js` | Supabase client configuration |
+| `db.js` | IndexedDB operations for offline support |

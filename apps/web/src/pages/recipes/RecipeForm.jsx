@@ -21,50 +21,14 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 
-const CATEGORIES = [
-  "Grønnsaker",
-  "Frukt",
-  "Kjøtt",
-  "Fisk og sjømat",
-  "Meieriprodukter",
-  "Egg",
-  "Korn og kornprodukter",
-  "Belgfrukter",
-  "Poteter og rotfrukter",
-  "Nøtter og frø",
-  "Krydder og urter",
-  "Oljer og fett",
-  "Søtning og sukker",
-  "Sauser og dressinger",
-  "Plantebaserte alternativer",
-];
-
-const UNITS = [
-  "stk",
-  "skive",
-  "bit",
-  "filet",
-  "porsjon",
-  "g",
-  "kg",
-  "mg",
-  "ml",
-  "dl",
-  "l",
-  "ts",
-  "ss",
-  "klype",
-  "kopp",
-  "bunt",
-  "håndfull",
-  "pose",
-  "pakke",
-  "boks",
-  "glass",
-  "beger",
-  "tube",
-  "kartong",
-];
+// Unit type labels in Norwegian
+const UNIT_TYPE_LABELS = {
+  count: "Antall",
+  weight: "Vekt",
+  volume: "Volum",
+  kitchen: "Kjøkkenmål",
+  package: "Pakning",
+};
 
 const schema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -88,10 +52,12 @@ export function RecipeForm() {
   const { user } = useAuth();
   const isEditing = Boolean(id);
 
-  const [loading, setLoading] = useState(isEditing);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [allIngredients, setAllIngredients] = useState([]);
   const [allTags, setAllTags] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [units, setUnits] = useState([]);
   const [selectedTags, setSelectedTags] = useState([]);
   const [showIngredientPicker, setShowIngredientPicker] = useState(false);
   const [ingredientSearch, setIngredientSearch] = useState("");
@@ -127,49 +93,48 @@ export function RecipeForm() {
   }, [id]);
 
   const loadData = async () => {
-    // Load all ingredients
-    const { data: ingredients } = await supabase
-      .from("ingredients")
-      .select("id, name, category, default_unit")
-      .order("name");
+    // Load all data in parallel
+    const promises = [
+      supabase.from("ingredients").select("id, name, category, default_unit").order("name"),
+      supabase.from("tags").select("id, name, color").order("name"),
+      supabase.from("categories").select("*").order("sort_order"),
+      supabase.from("units").select("*").order("sort_order"),
+    ];
 
-    if (ingredients) setAllIngredients(ingredients);
-
-    // Load all tags
-    const { data: tags } = await supabase
-      .from("tags")
-      .select("id, name, color")
-      .order("name");
-
-    if (tags) setAllTags(tags);
-
-    // If editing, load recipe
     if (id) {
-      const { data: recipe } = await supabase
-        .from("recipes")
-        .select(`
-          *,
-          recipe_ingredients(
-            ingredient_id,
-            quantity,
-            unit
-          ),
-          recipe_tags(tag_id)
-        `)
-        .eq("id", id)
-        .single();
-
-      if (recipe) {
-        reset({
-          title: recipe.title,
-          description: recipe.description || "",
-          instructions: recipe.instructions || "",
-          servings: recipe.servings,
-          ingredients: recipe.recipe_ingredients || [],
-        });
-        setSelectedTags(recipe.recipe_tags?.map((rt) => rt.tag_id) || []);
-      }
+      promises.push(
+        supabase
+          .from("recipes")
+          .select(`
+            *,
+            recipe_ingredients(ingredient_id, quantity, unit),
+            recipe_tags(tag_id)
+          `)
+          .eq("id", id)
+          .single()
+      );
     }
+
+    const results = await Promise.all(promises);
+
+    const [ingredientsRes, tagsRes, categoriesRes, unitsRes, recipeRes] = results;
+
+    if (ingredientsRes.data) setAllIngredients(ingredientsRes.data);
+    if (tagsRes.data) setAllTags(tagsRes.data);
+    if (categoriesRes.data) setCategories(categoriesRes.data);
+    if (unitsRes.data) setUnits(unitsRes.data);
+
+    if (recipeRes?.data) {
+      reset({
+        title: recipeRes.data.title,
+        description: recipeRes.data.description || "",
+        instructions: recipeRes.data.instructions || "",
+        servings: recipeRes.data.servings,
+        ingredients: recipeRes.data.recipe_ingredients || [],
+      });
+      setSelectedTags(recipeRes.data.recipe_tags?.map((rt) => rt.tag_id) || []);
+    }
+
     setLoading(false);
   };
 
@@ -313,6 +278,15 @@ export function RecipeForm() {
     return ing.default_unit ? `${ing.name} (${ing.default_unit})` : ing.name;
   };
 
+  // Group units by type for better display
+  const groupedUnits = units.reduce((acc, unit) => {
+    if (!acc[unit.unit_type]) {
+      acc[unit.unit_type] = [];
+    }
+    acc[unit.unit_type].push(unit);
+    return acc;
+  }, {});
+
   if (loading) {
     return (
       <Shell title={isEditing ? "Edit Recipe" : "New Recipe"} showBack>
@@ -433,11 +407,22 @@ export function RecipeForm() {
                           {...register(`ingredients.${index}.quantity`)}
                           className="w-20"
                         />
-                        <Input
-                          placeholder="Unit"
-                          {...register(`ingredients.${index}.unit`)}
-                          className="flex-1"
-                        />
+                        <SelectWrapper className="flex-1">
+                          <Select
+                            {...register(`ingredients.${index}.unit`)}
+                          >
+                            <option value="">Velg enhet...</option>
+                            {Object.entries(groupedUnits).map(([type, typeUnits]) => (
+                              <optgroup key={type} label={UNIT_TYPE_LABELS[type] || type}>
+                                {typeUnits.map((unit) => (
+                                  <option key={unit.id} value={unit.name}>
+                                    {unit.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </Select>
+                        </SelectWrapper>
                       </div>
                     </div>
                     <Button
@@ -568,8 +553,8 @@ export function RecipeForm() {
                     onValueChange={(val) => setNewIngredient((prev) => ({ ...prev, category: val }))}
                   >
                     <option value="">Velg kategori...</option>
-                    {CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.name}>{cat.name}</option>
                     ))}
                   </Select>
                 </SelectWrapper>
@@ -583,8 +568,8 @@ export function RecipeForm() {
                     onValueChange={(val) => setNewIngredient((prev) => ({ ...prev, default_unit: val }))}
                   >
                     <option value="">Velg enhet...</option>
-                    {UNITS.map((unit) => (
-                      <option key={unit} value={unit}>{unit}</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.name}>{unit.name}</option>
                     ))}
                   </Select>
                 </SelectWrapper>

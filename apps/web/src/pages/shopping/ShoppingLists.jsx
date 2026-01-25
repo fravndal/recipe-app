@@ -194,6 +194,9 @@ export function ShoppingLists() {
             {lists.map((list) => {
               const { total, checked } = getItemStats(list);
               const StatusIcon = STATUS_CONFIG[list.status]?.icon || Clock;
+              // Show as fully completed when status is completed
+              const isCompleted = list.status === "completed";
+              const displayChecked = isCompleted ? total : checked;
 
               return (
                 <Card key={list.id} className="hover:bg-accent/50 transition-colors">
@@ -218,12 +221,12 @@ export function ShoppingLists() {
                           "Ingen varer"
                         ) : (
                           <>
-                            {checked}/{total} varer krysset av
+                            {displayChecked}/{total} varer krysset av
                             <div className="w-full h-1.5 bg-muted rounded-full mt-2 overflow-hidden">
                               <div
                                 className="h-full bg-primary rounded-full transition-all"
                                 style={{
-                                  width: `${(checked / total) * 100}%`,
+                                  width: `${(displayChecked / total) * 100}%`,
                                 }}
                               />
                             </div>

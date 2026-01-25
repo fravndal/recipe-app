@@ -89,6 +89,8 @@ for f in migrations/*.sql; do
 done
 ```
 
+Se [Database-migrasjoner](#database-migrasjoner) for mer detaljer.
+
 ### Steg 6: Sett opp database-roller
 
 ```bash
@@ -194,6 +196,81 @@ docker exec supabase-db psql -U postgres -d postgres -c \
 ```
 
 Logg ut og inn igjen for å få ny token.
+
+## Database-migrasjoner
+
+Migrasjoner kjøres direkte mot PostgreSQL-containeren via `docker exec`.
+
+### Kjør én enkelt migrasjon
+
+```bash
+docker exec -i supabase-db psql -U postgres -d postgres < supabase/migrations/011_sync_recipe_ingredients_to_shopping.sql
+```
+
+### Kjør alle migrasjoner (i rekkefølge)
+
+```bash
+cd supabase
+for f in migrations/*.sql; do
+  echo "Kjører: $f"
+  docker exec -i supabase-db psql -U postgres -d postgres < "$f"
+done
+```
+
+### Kjør vilkårlig SQL
+
+```bash
+# Enkel kommando
+docker exec supabase-db psql -U postgres -d postgres -c "SELECT * FROM recipes LIMIT 5;"
+
+# Flere kommandoer
+docker exec supabase-db psql -U postgres -d postgres -c "
+SELECT trigger_name, event_manipulation 
+FROM information_schema.triggers 
+WHERE event_object_table = 'recipe_ingredients';
+"
+```
+
+### Se eksisterende tabeller
+
+```bash
+docker exec supabase-db psql -U postgres -d postgres -c "\dt public.*"
+```
+
+### Se triggere på en tabell
+
+```bash
+docker exec supabase-db psql -U postgres -d postgres -c "
+SELECT trigger_name, event_manipulation, action_timing 
+FROM information_schema.triggers 
+WHERE event_object_table = 'recipe_ingredients';
+"
+```
+
+### Se funksjoner
+
+```bash
+docker exec supabase-db psql -U postgres -d postgres -c "\df public.*"
+```
+
+### Tips
+
+| Flagg | Beskrivelse |
+|-------|-------------|
+| `-i` | Interaktiv modus (for å pipe SQL-filer) |
+| `-c "SQL"` | Kjør én SQL-kommando |
+| `-f /path/file.sql` | Kjør SQL-fil inne i containeren |
+| `\dt` | List tabeller |
+| `\df` | List funksjoner |
+| `\d tablename` | Beskriv tabell |
+
+### Koble til interaktivt
+
+```bash
+docker exec -it supabase-db psql -U postgres -d postgres
+```
+
+Dette åpner en psql-shell der du kan kjøre SQL-kommandoer direkte. Avslutt med `\q`.
 
 ## Dokumentasjon
 
