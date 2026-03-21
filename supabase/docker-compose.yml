@@ -1,8 +1,11 @@
+# Mac ARM (Apple Silicon) compatible: services use linux/arm64 where available.
+# If an image fails to pull, set that service to platform: linux/amd64 (emulated).
 name: recipe-backend
 
 services:
   db:
     image: postgres:15
+    platform: linux/arm64
     container_name: supabase-db
     restart: unless-stopped
     environment:
@@ -11,11 +14,13 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
     ports:
       - "54322:5432"
+    shm_size: "256mb"
     volumes:
       - supabase_db_data2:/var/lib/postgresql/data
 
   rest:
     image: postgrest/postgrest:v9.0.1
+    platform: linux/arm64
     container_name: supabase-rest
     restart: unless-stopped
     depends_on: [db]
@@ -31,6 +36,7 @@ services:
 
   auth:
     image: supabase/gotrue:v2.158.1
+    platform: linux/arm64
     container_name: supabase-auth
     restart: unless-stopped
     depends_on: [db]
@@ -53,6 +59,7 @@ services:
 
   storage:
     image: supabase/storage-api:v1.11.13
+    platform: linux/arm64
     container_name: supabase-storage
     restart: unless-stopped
     depends_on: [db, rest]
@@ -75,6 +82,7 @@ services:
 
   studio:
     image: supabase/studio:latest
+    platform: linux/arm64
     container_name: supabase-studio
     restart: unless-stopped
     depends_on: [db, rest, auth, storage]
@@ -89,6 +97,7 @@ services:
 
   kong:
     image: kong:2.8
+    platform: linux/amd64  # no arm64 image; runs via Rosetta 2 on Mac
     container_name: supabase-kong
     restart: unless-stopped
     depends_on: [rest, auth, storage]
@@ -104,6 +113,7 @@ services:
 
   meta:
     image: supabase/postgres-meta:v0.95.2
+    platform: linux/arm64
     container_name: supabase-meta
     restart: unless-stopped
     depends_on: [db]
@@ -119,6 +129,5 @@ services:
       - "54327:8080"
 
 volumes:
-  supabase_db_data:
   supabase_db_data2:
   supabase_storage_data:

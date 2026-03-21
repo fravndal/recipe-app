@@ -230,6 +230,13 @@ end;
 $$;
 
 -- Grant execute permission to authenticated users
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+END
+$$;
 grant execute on function public.seed_default_ingredients(uuid) to authenticated;
 
 -- Trigger function to auto-seed ingredients for new users

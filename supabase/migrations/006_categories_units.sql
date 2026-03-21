@@ -79,7 +79,18 @@ INSERT INTO public.units (name, unit_type, sort_order) VALUES
   ('flaske', 'package', 49)
 ON CONFLICT (name) DO NOTHING;
 
--- Grant read access to all authenticated users (no RLS needed - these are global)
+-- Create roles if they don't exist, then grant
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+END
+$$;
+
 GRANT SELECT ON public.categories TO anon, authenticated;
 GRANT SELECT ON public.units TO anon, authenticated;
 

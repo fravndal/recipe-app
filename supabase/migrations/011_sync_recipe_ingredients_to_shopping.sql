@@ -47,6 +47,7 @@ END;
 $$;
 
 -- Trigger: when a recipe ingredient is added
+DROP TRIGGER IF EXISTS recipe_ingredient_added_sync ON public.recipe_ingredients;
 CREATE TRIGGER recipe_ingredient_added_sync
 AFTER INSERT ON public.recipe_ingredients
 FOR EACH ROW
@@ -77,6 +78,7 @@ END;
 $$;
 
 -- Trigger: when a recipe ingredient is removed
+DROP TRIGGER IF EXISTS recipe_ingredient_removed_sync ON public.recipe_ingredients;
 CREATE TRIGGER recipe_ingredient_removed_sync
 AFTER DELETE ON public.recipe_ingredients
 FOR EACH ROW
@@ -93,7 +95,7 @@ BEGIN
   -- When a recipe ingredient quantity/unit is updated,
   -- update it in shopping lists (but only unchecked items)
   UPDATE public.shopping_list_items sli
-  SET 
+  SET
     quantity = NEW.quantity,
     unit = NEW.unit,
     updated_at = now()
@@ -111,6 +113,7 @@ END;
 $$;
 
 -- Trigger: when a recipe ingredient quantity/unit is updated
+DROP TRIGGER IF EXISTS recipe_ingredient_updated_sync ON public.recipe_ingredients;
 CREATE TRIGGER recipe_ingredient_updated_sync
 AFTER UPDATE OF quantity, unit ON public.recipe_ingredients
 FOR EACH ROW

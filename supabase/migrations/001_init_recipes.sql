@@ -42,6 +42,7 @@ create table if not exists public.ingredients (
 create index if not exists ingredients_user_id_idx on public.ingredients(user_id);
 create index if not exists ingredients_name_idx on public.ingredients using gin (name gin_trgm_ops);
 
+drop trigger if exists ingredients_set_updated_at on public.ingredients;
 create trigger ingredients_set_updated_at
 before update on public.ingredients
 for each row execute function public.set_updated_at();
@@ -69,6 +70,7 @@ create table if not exists public.recipes (
 create index if not exists recipes_user_id_idx on public.recipes(user_id);
 create index if not exists recipes_title_idx on public.recipes using gin (title gin_trgm_ops);
 
+drop trigger if exists recipes_set_updated_at on public.recipes;
 create trigger recipes_set_updated_at
 before update on public.recipes
 for each row execute function public.set_updated_at();
@@ -103,6 +105,7 @@ create index if not exists recipe_ingredients_user_id_idx on public.recipe_ingre
 create index if not exists recipe_ingredients_recipe_id_idx on public.recipe_ingredients(recipe_id);
 create index if not exists recipe_ingredients_ingredient_id_idx on public.recipe_ingredients(ingredient_id);
 
+drop trigger if exists recipe_ingredients_set_updated_at on public.recipe_ingredients;
 create trigger recipe_ingredients_set_updated_at
 before update on public.recipe_ingredients
 for each row execute function public.set_updated_at();

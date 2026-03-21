@@ -11,13 +11,14 @@ create table if not exists public.tags (
   color text null, -- hex color e.g. "#ef4444"
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  
+
   -- Unique tag names per user
   constraint tags_user_name_unique unique (user_id, name)
 );
 
 create index if not exists tags_user_id_idx on public.tags(user_id);
 
+drop trigger if exists tags_set_updated_at on public.tags;
 create trigger tags_set_updated_at
 before update on public.tags
 for each row execute function public.set_updated_at();
@@ -28,7 +29,7 @@ create table if not exists public.recipe_tags (
   recipe_id uuid not null references public.recipes(id) on delete cascade,
   tag_id uuid not null references public.tags(id) on delete cascade,
   created_at timestamptz not null default now(),
-  
+
   -- Prevent duplicate tag assignments
   constraint recipe_tags_unique unique (recipe_id, tag_id)
 );
@@ -39,19 +40,23 @@ create index if not exists recipe_tags_tag_id_idx on public.recipe_tags(tag_id);
 -- RLS for tags
 alter table public.tags enable row level security;
 
+drop policy if exists "Tags are readable by owner" on public.tags;
 create policy "Tags are readable by owner"
 on public.tags for select
 using (auth.uid() = user_id);
 
+drop policy if exists "Tags are insertable by owner" on public.tags;
 create policy "Tags are insertable by owner"
 on public.tags for insert
 with check (auth.uid() = user_id);
 
+drop policy if exists "Tags are updatable by owner" on public.tags;
 create policy "Tags are updatable by owner"
 on public.tags for update
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
+drop policy if exists "Tags are deletable by owner" on public.tags;
 create policy "Tags are deletable by owner"
 on public.tags for delete
 using (auth.uid() = user_id);
@@ -59,6 +64,7 @@ using (auth.uid() = user_id);
 -- RLS for recipe_tags (based on recipe ownership)
 alter table public.recipe_tags enable row level security;
 
+drop policy if exists "Recipe tags are readable by recipe owner" on public.recipe_tags;
 create policy "Recipe tags are readable by recipe owner"
 on public.recipe_tags for select
 using (
@@ -69,6 +75,7 @@ using (
   )
 );
 
+drop policy if exists "Recipe tags are insertable by recipe owner" on public.recipe_tags;
 create policy "Recipe tags are insertable by recipe owner"
 on public.recipe_tags for insert
 with check (
@@ -79,6 +86,7 @@ with check (
   )
 );
 
+drop policy if exists "Recipe tags are deletable by recipe owner" on public.recipe_tags;
 create policy "Recipe tags are deletable by recipe owner"
 on public.recipe_tags for delete
 using (
