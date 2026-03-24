@@ -45,8 +45,8 @@ services:
       GOTRUE_API_PORT: 9999
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?search_path=auth
-      GOTRUE_SITE_URL: ${SITE_URL}
-      GOTRUE_URI_ALLOW_LIST: ${SITE_URL}
+      GOTRUE_SITE_URL: ${SITE_URL:-https://foosdi.no}
+      GOTRUE_URI_ALLOW_LIST: ${SITE_URL:-https://foosdi.no}
       GOTRUE_JWT_SECRET: ${JWT_SECRET}
       GOTRUE_JWT_EXP: 3600
       GOTRUE_JWT_AUD: authenticated
