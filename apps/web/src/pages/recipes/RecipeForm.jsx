@@ -59,6 +59,7 @@ export function RecipeForm() {
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
   const [selectedTags, setSelectedTags] = useState([]);
+  const [originalIngredients, setOriginalIngredients] = useState([]);
   const [showIngredientPicker, setShowIngredientPicker] = useState(false);
   const [ingredientSearch, setIngredientSearch] = useState("");
   const [showNewIngredientForm, setShowNewIngredientForm] = useState(false);
@@ -133,6 +134,7 @@ export function RecipeForm() {
         ingredients: recipeRes.data.recipe_ingredients || [],
       });
       setSelectedTags(recipeRes.data.recipe_tags?.map((rt) => rt.tag_id) || []);
+      setOriginalIngredients(recipeRes.data.recipe_ingredients || []);
     }
 
     setLoading(false);
@@ -174,21 +176,54 @@ export function RecipeForm() {
     }
 
     // Update ingredients
-    await supabase
-      .from("recipe_ingredients")
-      .delete()
-      .eq("recipe_id", recipeId);
+    if (isEditing) {
+      const newIngredients = data.ingredients || [];
+      const newIngredientIds = new Set(newIngredients.map((i) => i.ingredient_id));
+      const origIngredientIds = new Set(originalIngredients.map((i) => i.ingredient_id));
 
-    if (data.ingredients && data.ingredients.length > 0) {
-      const ingredientData = data.ingredients.map((ing) => ({
-        user_id: user.id,
-        recipe_id: recipeId,
-        ingredient_id: ing.ingredient_id,
-        quantity: ing.quantity || 1,
-        unit: ing.unit || null,
-      }));
+      const toDelete = originalIngredients.filter((i) => !newIngredientIds.has(i.ingredient_id));
+      const toInsert = newIngredients.filter((i) => !origIngredientIds.has(i.ingredient_id));
+      const toUpdate = newIngredients.filter((i) => origIngredientIds.has(i.ingredient_id));
 
-      await supabase.from("recipe_ingredients").insert(ingredientData);
+      if (toDelete.length > 0) {
+        await supabase
+          .from("recipe_ingredients")
+          .delete()
+          .eq("recipe_id", recipeId)
+          .in("ingredient_id", toDelete.map((i) => i.ingredient_id));
+      }
+
+      if (toInsert.length > 0) {
+        await supabase.from("recipe_ingredients").insert(
+          toInsert.map((ing) => ({
+            user_id: user.id,
+            recipe_id: recipeId,
+            ingredient_id: ing.ingredient_id,
+            quantity: ing.quantity || 1,
+            unit: ing.unit || null,
+          }))
+        );
+      }
+
+      for (const ing of toUpdate) {
+        await supabase
+          .from("recipe_ingredients")
+          .update({ quantity: ing.quantity || 1, unit: ing.unit || null })
+          .eq("recipe_id", recipeId)
+          .eq("ingredient_id", ing.ingredient_id);
+      }
+    } else {
+      if (data.ingredients && data.ingredients.length > 0) {
+        const ingredientData = data.ingredients.map((ing) => ({
+          user_id: user.id,
+          recipe_id: recipeId,
+          ingredient_id: ing.ingredient_id,
+          quantity: ing.quantity || 1,
+          unit: ing.unit || null,
+        }));
+
+        await supabase.from("recipe_ingredients").insert(ingredientData);
+      }
     }
 
     // Update tags
